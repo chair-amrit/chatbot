@@ -1,6 +1,10 @@
 from openai import OpenAI
+import os
+from dotenv import load_dotenv
 
-client=OpenAI(api_key="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")
+load_dotenv()
+
+client=OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 messages=[
     {"role":"system", "content":"You are a helpful assistant."},
