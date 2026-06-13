@@ -18,23 +18,19 @@ while True:
 
     messages.append({"role":"user", "content":user_input})
 
-    reply=f"you said: {user_input}"
-
-    print("bot:",reply)
-
-    messages.append({"role":"assistant", "content":"reply"})
-
-    print(messages)
-
-
-
-
-
-"""    try:
+    try:
         response=client.chat.completions.create(
         model="gpt-4o-mini",
         messages=messages
         )
         print(response)
+
     except Exception as e:
-        print(f"Error:{e}") """
+        print(f"Error:{e}")
+
+
+    reply=response.choices[0].message.content
+
+    print("Bot:",reply)
+
+    messages.append({"role":"assistant", "content":"reply"})
