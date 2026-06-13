@@ -12,7 +12,7 @@ model=genai.GenerativeModel("gemini-2.5-flash")
 while True:
     user_input=input("You:")
 
-    if user_input=="bye":
+    if user_input.lower()=="bye":
         break
 
     try:
