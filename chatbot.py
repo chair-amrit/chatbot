@@ -1,14 +1,13 @@
-from openai import OpenAI
 import os
 from dotenv import load_dotenv
+import google.generativeai as genai
 
 load_dotenv()
 
-client=OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+genai.configure(api_key=os.getenv("API_KEY"))
 
-messages=[
-    {"role":"system", "content":"You are a helpful assistant."},
-]
+model=genai.GenerativeModel("gemini-2.5-flash")
+
 
 while True:
     user_input=input("You:")
@@ -16,21 +15,12 @@ while True:
     if user_input=="bye":
         break
 
-    messages.append({"role":"user", "content":user_input})
-
     try:
-        response=client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages
-        )
-        print(response)
+        response=model.generate_content(user_input)
+
+        reply=response.text
+
+        print("Bot:",reply)
 
     except Exception as e:
         print(f"Error:{e}")
-
-
-    reply=response.choices[0].message.content
-
-    print("Bot:",reply)
-
-    messages.append({"role":"assistant", "content":"reply"})
