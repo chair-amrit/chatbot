@@ -4,7 +4,13 @@ import google.generativeai as genai
 
 load_dotenv()
 
-genai.configure(api_key=os.getenv("API_KEY"))
+api_key = os.getenv("API_KEY")
+
+if not api_key:
+    print("Error: API_KEY is missing. Add it to your .env file.")
+    raise SystemExit(1)
+
+genai.configure(api_key=api_key)
 
 model=genai.GenerativeModel("gemini-2.5-flash")
 
