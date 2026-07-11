@@ -1,128 +1,118 @@
 # Gemini CLI Chatbot
 
-A simple command-line chatbot built using Python and the Gemini API.
+A simple command-line chatbot built with Python and Google's Gemini API.
 
 ## Features
 
-* Takes user input from the terminal
-* Sends prompts to Gemini
-* Receives AI-generated responses
-* Displays responses in the terminal
-* Runs continuously until the user types `bye`
-
----
-
-## Technologies Used
-
-* Python
-* Gemini API
-* google-generativeai
-* python-dotenv
-
----
+- Runs in the terminal
+- Sends user messages to Gemini
+- Keeps a conversation session while the app is running
+- Skips empty messages
+- Exits when the user types `bye`, `exit`, or `quit`
+- Reads the API key from a `.env` file
 
 ## Project Structure
 
 ```text
-project/
-│
-├── chatbot.py
-├── .env
-├── requirements.txt
-└── README.md
+chatbot/
+|-- chatbot.py
+|-- requirements.txt
+|-- readme.md
+|-- .env
+`-- venv/
 ```
 
----
+## Requirements
 
-## Installation
+- Python 3.10 or newer
+- Gemini API key
 
-### 1. Create a Virtual Environment
+Python packages:
 
-```bash
+```text
+google-generativeai>=0.8.0
+python-dotenv>=1.0.0
+```
+
+## Setup
+
+Create a virtual environment:
+
+```powershell
 python -m venv venv
 ```
 
-### 2. Activate the Virtual Environment
+Activate it on Windows PowerShell:
 
-```bash
-venv\Scripts\activate
+```powershell
+venv\Scripts\Activate.ps1
 ```
 
-### 3. Install Dependencies
+Install dependencies:
 
-```bash
-pip install google-generativeai
-pip install python-dotenv
+```powershell
+pip install -r requirements.txt
 ```
-
----
 
 ## Environment Variables
 
-Create a `.env` file in the project root directory:
+Create a `.env` file in the project root:
 
 ```env
-API_KEY=YOUR_GEMINI_API_KEY
+GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
-Replace `YOUR_GEMINI_API_KEY` with your actual Gemini API key.
+The `.env` file is ignored by Git so your real API key is not committed.
 
----
+## Run
 
-## Running the Application
+Using the active virtual environment:
 
-```bash
+```powershell
 python chatbot.py
 ```
+
+Or run directly with the virtual environment Python:
+
+```powershell
+venv\Scripts\python.exe chatbot.py
+```
+
+## Usage
 
 Example:
 
 ```text
-You: What is Artificial Intelligence?
-Bot: Artificial Intelligence is the simulation of human intelligence by machines.
+You: What is artificial intelligence?
+Bot: Artificial intelligence is the ability of machines to perform tasks that usually require human intelligence.
 ```
 
-Exit the chatbot:
+Exit the chatbot with any of these:
 
 ```text
-You: bye
+bye
+exit
+quit
 ```
 
----
-
-## Workflow
+## How It Works
 
 ```text
-User Input
-    ↓
-Gemini API
-    ↓
-Model Response
-    ↓
-Terminal Output
+User input
+-> chatbot.py
+-> Gemini API
+-> model response
+-> terminal output
 ```
 
----
+## Notes
 
-## Learning Outcomes
+This project currently uses the `google-generativeai` package. That package now shows a deprecation warning and Google recommends migrating to the newer `google.genai` package in a future upgrade.
 
-This project demonstrates:
+## Possible Next Upgrades
 
-* Using environment variables securely
-* Connecting a Python application to an LLM API
-* Sending prompts to Gemini
-* Receiving and displaying model responses
-* Building a basic command-line chatbot
-
----
-
-## Future Improvements
-
-* Add conversation memory
-* Read and process PDF documents
-* Integrate LangChain
-* Build a document question-answering system
-* Add a graphical user interface (GUI)
-
-```
-```
+- Add `/help` and `/clear` commands
+- Add configurable model settings
+- Save chat history to a file
+- Add document or PDF question answering
+- Migrate from `google-generativeai` to `google.genai`
