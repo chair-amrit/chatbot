@@ -34,7 +34,7 @@ def main():
             print("Bot:", reply)
 
         except Exception as e:
-            print(f"Error:{e}")
+            print(f"Gemini request failed: {e}")
 
 
 if __name__ == "__main__":
