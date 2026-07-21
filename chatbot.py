@@ -17,24 +17,28 @@ def main():
     model = genai.GenerativeModel("gemini-2.5-flash")
     chat = model.start_chat(history=[])
 
-    while True:
-        user_input = input("You:")
+    try:
+        while True:
+            user_input = input("You:")
+            user_input = user_input.strip()
 
-        if user_input.lower() in {"bye", "exit", "quit"}:
-            break
+            if user_input.lower() in {"bye", "exit", "quit"}:
+                break
 
-        if not user_input.strip():
-            continue
+            if not user_input:
+                continue
 
-        try:
-            response = chat.send_message(user_input)
+            try:
+                response = chat.send_message(user_input)
 
-            reply = response.text
+                reply = response.text
 
-            print("Bot:", reply)
+                print("Bot:", reply)
 
-        except Exception as e:
-            print(f"Gemini request failed: {e}")
+            except Exception as e:
+                print(f"Gemini request failed: {e}")
+    except KeyboardInterrupt:
+        print("\nExiting chatbot.")
 
 
 if __name__ == "__main__":
