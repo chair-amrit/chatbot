@@ -1,9 +1,19 @@
 import os
+import logging
 from dotenv import load_dotenv
 import google.generativeai as genai
 
 
+MODEL_NAME = "gemini-2.5-flash"
+SYSTEM_INSTRUCTION = (
+    "You are a helpful, concise chatbot. Answer clearly and ask clarifying "
+    "questions when the user's request is ambiguous."
+)
+EXIT_COMMANDS = {"bye", "exit", "quit"}
+
+
 def main():
+    logging.basicConfig(level=logging.ERROR, format="%(levelname)s: %(message)s")
     load_dotenv()
 
     api_key = os.getenv("GEMINI_API_KEY")
@@ -14,15 +24,20 @@ def main():
 
     genai.configure(api_key=api_key)
 
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    model = genai.GenerativeModel(
+        MODEL_NAME,
+        system_instruction=SYSTEM_INSTRUCTION,
+    )
     chat = model.start_chat(history=[])
+
+    print("Chatbot ready. Type 'bye', 'exit', or 'quit' to stop.")
 
     try:
         while True:
             user_input = input("You:")
             user_input = user_input.strip()
 
-            if user_input.lower() in {"bye", "exit", "quit"}:
+            if user_input.lower() in EXIT_COMMANDS:
                 break
 
             if not user_input:
@@ -31,12 +46,17 @@ def main():
             try:
                 response = chat.send_message(user_input)
 
-                reply = response.text
+                reply = getattr(response, "text", "").strip()
+
+                if not reply:
+                    print("Bot: I did not receive a valid response. Please try again.")
+                    continue
 
                 print("Bot:", reply)
 
             except Exception as e:
-                print(f"Gemini request failed: {e}")
+                logging.exception("Gemini request failed")
+                print("Bot: Sorry, something went wrong. Please try again.")
     except KeyboardInterrupt:
         print("\nExiting chatbot.")
 
