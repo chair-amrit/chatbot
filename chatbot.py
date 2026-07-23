@@ -4,6 +4,11 @@ from typing import Any
 from dotenv import load_dotenv
 import google.generativeai as genai
 
+try:
+    from google.api_core import exceptions as google_exceptions
+except ImportError:
+    google_exceptions = None
+
 
 DEFAULT_MODEL_NAME = "gemini-2.5-flash"
 DEFAULT_TEMPERATURE = 0.7
@@ -14,6 +19,9 @@ SYSTEM_INSTRUCTION = (
 )
 EXIT_COMMANDS = {"bye", "exit", "quit"}
 SLASH_COMMANDS = {"/help", "/clear", "/model"}
+GEMINI_API_ERRORS = (
+    (google_exceptions.GoogleAPIError,) if google_exceptions is not None else ()
+)
 
 
 def load_api_key() -> str:
@@ -81,6 +89,13 @@ def show_help() -> None:
     print("  bye, exit, quit - Stop the chatbot")
 
 
+def print_bot_reply(reply: str) -> None:
+    print()
+    print("Bot:")
+    print(reply)
+    print()
+
+
 def run_chat_loop(model: Any, chat: Any, model_name: str) -> None:
     print("Chatbot ready. Type '/help' for commands or 'bye', 'exit', or 'quit' to stop.")
 
@@ -120,11 +135,14 @@ def run_chat_loop(model: Any, chat: Any, model_name: str) -> None:
                     print("Bot: I did not receive a valid response. Please try again.")
                     continue
 
-                print("Bot:", reply)
+                print_bot_reply(reply)
 
-            except Exception:
+            except GEMINI_API_ERRORS:
                 logging.exception("Gemini request failed")
-                print("Bot: Sorry, something went wrong. Please try again.")
+                print("Bot: Sorry, the Gemini API request failed. Please try again.")
+            except Exception:
+                logging.exception("Unexpected chatbot error")
+                print("Bot: Sorry, something unexpected went wrong. Please try again.")
     except KeyboardInterrupt:
         print("\nExiting chatbot.")
 
