@@ -18,7 +18,7 @@ SYSTEM_INSTRUCTION = (
     "questions when the user's request is ambiguous."
 )
 EXIT_COMMANDS = {"bye", "exit", "quit"}
-SLASH_COMMANDS = {"/help", "/clear", "/model"}
+SLASH_COMMANDS = {"/help", "/clear", "/reset", "/model"}
 GEMINI_API_ERRORS = (
     (google_exceptions.GoogleAPIError,) if google_exceptions is not None else ()
 )
@@ -85,6 +85,7 @@ def show_help() -> None:
     print("Commands:")
     print("  /help  - Show available commands")
     print("  /clear - Clear the current chat history")
+    print("  /reset - Clear the current chat history")
     print("  /model - Show the current model")
     print("  bye, exit, quit - Stop the chatbot")
 
@@ -115,7 +116,7 @@ def run_chat_loop(model: Any, chat: Any, model_name: str) -> None:
             if normalized_input in SLASH_COMMANDS:
                 if normalized_input == "/help":
                     show_help()
-                elif normalized_input == "/clear":
+                elif normalized_input in {"/clear", "/reset"}:
                     chat = model.start_chat(history=[])
                     print("Chat history cleared.")
                 elif normalized_input == "/model":
