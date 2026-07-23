@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import Any
+from typing import Any, Callable
 from dotenv import load_dotenv
 import google.generativeai as genai
 
@@ -18,7 +18,6 @@ SYSTEM_INSTRUCTION = (
     "questions when the user's request is ambiguous."
 )
 EXIT_COMMANDS = {"bye", "exit", "quit"}
-SLASH_COMMANDS = {"/help", "/clear", "/reset", "/model"}
 GEMINI_API_ERRORS = (
     (google_exceptions.GoogleAPIError,) if google_exceptions is not None else ()
 )
@@ -29,7 +28,9 @@ def load_api_key() -> str:
     api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
-        print("Error: GEMINI_API_KEY is missing. Add it to your .env file.")
+        print("Error: GEMINI_API_KEY is missing.")
+        print("Add it to .env in this project folder, for example:")
+        print("GEMINI_API_KEY=your_api_key_here")
         raise SystemExit(1)
 
     return api_key
@@ -100,6 +101,25 @@ def print_bot_reply(reply: str) -> None:
 def run_chat_loop(model: Any, chat: Any, model_name: str) -> None:
     print("Chatbot ready. Type '/help' for commands or 'bye', 'exit', or 'quit' to stop.")
 
+    def handle_help(current_chat: Any) -> Any:
+        show_help()
+        return current_chat
+
+    def handle_clear(current_chat: Any) -> Any:
+        print("Chat history cleared.")
+        return model.start_chat(history=[])
+
+    def handle_model(current_chat: Any) -> Any:
+        print(f"Current model: {model_name}")
+        return current_chat
+
+    command_handlers: dict[str, Callable[[Any], Any]] = {
+        "/help": handle_help,
+        "/clear": handle_clear,
+        "/reset": handle_clear,
+        "/model": handle_model,
+    }
+
     try:
         while True:
             user_input = input("You: ")
@@ -113,14 +133,9 @@ def run_chat_loop(model: Any, chat: Any, model_name: str) -> None:
             if not user_input:
                 continue
 
-            if normalized_input in SLASH_COMMANDS:
-                if normalized_input == "/help":
-                    show_help()
-                elif normalized_input in {"/clear", "/reset"}:
-                    chat = model.start_chat(history=[])
-                    print("Chat history cleared.")
-                elif normalized_input == "/model":
-                    print(f"Current model: {model_name}")
+            command_handler = command_handlers.get(normalized_input)
+            if command_handler is not None:
+                chat = command_handler(chat)
                 continue
 
             if normalized_input.startswith("/"):
