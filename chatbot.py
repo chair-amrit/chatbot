@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 from dotenv import load_dotenv
@@ -23,7 +24,29 @@ SYSTEM_INSTRUCTION = (
     "questions when the user's request is ambiguous."
 )
 EXIT_COMMANDS = {"bye", "exit", "quit"}
+MESSAGE_RETRY_ATTEMPTS = 3
+MESSAGE_RETRY_DELAY_SECONDS = 1.0
 GEMINI_API_ERRORS = (google_exceptions.GoogleAPIError,) if google_exceptions else None
+
+if google_exceptions:
+    TRANSIENT_GEMINI_ERRORS = tuple(
+        error_type
+        for name in (
+            "ResourceExhausted",
+            "TooManyRequests",
+            "ServiceUnavailable",
+            "DeadlineExceeded",
+            "GatewayTimeout",
+            "InternalServerError",
+        )
+        if (error_type := getattr(google_exceptions, name, None)) is not None
+    )
+else:
+    TRANSIENT_GEMINI_ERRORS = ()
+
+
+class MissingApiKeyError(Exception):
+    """Raised when GEMINI_API_KEY is unavailable."""
 
 
 @dataclass
@@ -41,10 +64,7 @@ def load_api_key() -> str:
     api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
-        print("Error: GEMINI_API_KEY is missing.")
-        print("Add it to .env in this project folder, for example:")
-        print("GEMINI_API_KEY=your_api_key_here")
-        raise SystemExit(1)
+        raise MissingApiKeyError("GEMINI_API_KEY is missing.")
 
     return api_key
 
@@ -152,6 +172,29 @@ def get_response_text(response: Any) -> str:
     return text.strip()
 
 
+def send_message_with_retry(chat: Any, user_input: str) -> Any:
+    delay_seconds = MESSAGE_RETRY_DELAY_SECONDS
+
+    for attempt in range(1, MESSAGE_RETRY_ATTEMPTS + 1):
+        try:
+            return chat.send_message(user_input)
+        except Exception as error:
+            if not TRANSIENT_GEMINI_ERRORS or not isinstance(error, TRANSIENT_GEMINI_ERRORS):
+                raise
+
+            if attempt == MESSAGE_RETRY_ATTEMPTS:
+                raise
+
+            logging.warning(
+                "Gemini request failed transiently. Retrying in %.1f seconds.",
+                delay_seconds,
+            )
+            time.sleep(delay_seconds)
+            delay_seconds *= 2
+
+    raise RuntimeError("Retry loop ended without a response.")
+
+
 def create_chat(api_key: str) -> ChatSession:
     genai.configure(api_key=api_key)
 
@@ -251,7 +294,7 @@ def run_chat_loop(session: ChatSession) -> None:
                 continue
 
             try:
-                response = session.chat.send_message(user_input)
+                response = send_message_with_retry(session.chat, user_input)
 
                 reply = get_response_text(response)
 
@@ -274,7 +317,15 @@ def run_chat_loop(session: ChatSession) -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
-    api_key = load_api_key()
+
+    try:
+        api_key = load_api_key()
+    except MissingApiKeyError as error:
+        print(f"Error: {error}")
+        print("Add it to .env in this project folder, for example:")
+        print("GEMINI_API_KEY=your_api_key_here")
+        raise SystemExit(1)
+
     session = create_chat(api_key)
     run_chat_loop(session)
 
