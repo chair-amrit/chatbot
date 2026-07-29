@@ -95,6 +95,20 @@ def get_int_env(name: str, default: int, min_value: int, max_value: int) -> int:
     return parsed_value
 
 
+def get_str_env(name: str, default: str) -> str:
+    value = os.getenv(name)
+
+    if value is None:
+        return default
+
+    stripped_value = value.strip()
+    if not stripped_value:
+        logging.warning("Invalid %s value %r. Using default: %s", name, value, default)
+        return default
+
+    return stripped_value
+
+
 def get_empty_response_message(response: Any) -> str:
     prompt_feedback = getattr(response, "prompt_feedback", None)
     block_reason = getattr(prompt_feedback, "block_reason", None)
@@ -130,7 +144,7 @@ def get_response_text(response: Any) -> str:
 def create_chat(api_key: str) -> tuple[Any, Any, str]:
     genai.configure(api_key=api_key)
 
-    model_name = os.getenv("GEMINI_MODEL", DEFAULT_MODEL_NAME)
+    model_name = get_str_env("GEMINI_MODEL", DEFAULT_MODEL_NAME)
     generation_config = {
         "temperature": get_float_env(
             "GEMINI_TEMPERATURE",
@@ -237,7 +251,7 @@ def run_chat_loop(model: Any, chat: Any, model_name: str) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.ERROR, format="%(levelname)s: %(message)s")
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
     api_key = load_api_key()
     model, chat, model_name = create_chat(api_key)
     run_chat_loop(model, chat, model_name)
