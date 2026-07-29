@@ -1,5 +1,6 @@
 import os
 import logging
+from dataclasses import dataclass
 from typing import Any, Callable
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -23,6 +24,16 @@ SYSTEM_INSTRUCTION = (
 )
 EXIT_COMMANDS = {"bye", "exit", "quit"}
 GEMINI_API_ERRORS = (google_exceptions.GoogleAPIError,) if google_exceptions else None
+
+
+@dataclass
+class ChatSession:
+    model: Any
+    chat: Any
+    model_name: str
+
+
+CommandHandler = Callable[[ChatSession], ChatSession]
 
 
 def load_api_key() -> str:
@@ -141,7 +152,7 @@ def get_response_text(response: Any) -> str:
     return text.strip()
 
 
-def create_chat(api_key: str) -> tuple[Any, Any, str]:
+def create_chat(api_key: str) -> ChatSession:
     genai.configure(api_key=api_key)
 
     model_name = get_str_env("GEMINI_MODEL", DEFAULT_MODEL_NAME)
@@ -165,7 +176,11 @@ def create_chat(api_key: str) -> tuple[Any, Any, str]:
         generation_config=generation_config,
     )
 
-    return model, model.start_chat(history=[]), model_name
+    return ChatSession(
+        model=model,
+        chat=model.start_chat(history=[]),
+        model_name=model_name,
+    )
 
 
 def show_help() -> None:
@@ -184,27 +199,34 @@ def print_bot_reply(reply: str) -> None:
     print()
 
 
-def run_chat_loop(model: Any, chat: Any, model_name: str) -> None:
-    print("Chatbot ready. Type '/help' for commands or 'bye', 'exit', or 'quit' to stop.")
+def handle_help(session: ChatSession) -> ChatSession:
+    show_help()
+    return session
 
-    def handle_help(current_chat: Any) -> Any:
-        show_help()
-        return current_chat
 
-    def handle_clear(current_chat: Any) -> Any:
-        print("Chat history cleared.")
-        return model.start_chat(history=[])
+def handle_clear(session: ChatSession) -> ChatSession:
+    print("Chat history cleared.")
+    session.chat = session.model.start_chat(history=[])
+    return session
 
-    def handle_model(current_chat: Any) -> Any:
-        print(f"Current model: {model_name}")
-        return current_chat
 
-    command_handlers: dict[str, Callable[[Any], Any]] = {
+def handle_model(session: ChatSession) -> ChatSession:
+    print(f"Current model: {session.model_name}")
+    return session
+
+
+def get_command_handlers() -> dict[str, CommandHandler]:
+    return {
         "/help": handle_help,
         "/clear": handle_clear,
         "/reset": handle_clear,
         "/model": handle_model,
     }
+
+
+def run_chat_loop(session: ChatSession) -> None:
+    print("Chatbot ready. Type '/help' for commands or 'bye', 'exit', or 'quit' to stop.")
+    command_handlers = get_command_handlers()
 
     try:
         while True:
@@ -221,7 +243,7 @@ def run_chat_loop(model: Any, chat: Any, model_name: str) -> None:
 
             command_handler = command_handlers.get(normalized_input)
             if command_handler is not None:
-                chat = command_handler(chat)
+                session = command_handler(session)
                 continue
 
             if normalized_input.startswith("/"):
@@ -229,7 +251,7 @@ def run_chat_loop(model: Any, chat: Any, model_name: str) -> None:
                 continue
 
             try:
-                response = chat.send_message(user_input)
+                response = session.chat.send_message(user_input)
 
                 reply = get_response_text(response)
 
@@ -253,8 +275,8 @@ def run_chat_loop(model: Any, chat: Any, model_name: str) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
     api_key = load_api_key()
-    model, chat, model_name = create_chat(api_key)
-    run_chat_loop(model, chat, model_name)
+    session = create_chat(api_key)
+    run_chat_loop(session)
 
 
 if __name__ == "__main__":
