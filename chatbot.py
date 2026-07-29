@@ -12,7 +12,11 @@ except ImportError:
 
 DEFAULT_MODEL_NAME = "gemini-2.5-flash"
 DEFAULT_TEMPERATURE = 0.7
+MIN_TEMPERATURE = 0.0
+MAX_TEMPERATURE = 2.0
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
+MIN_MAX_OUTPUT_TOKENS = 1
+MAX_MAX_OUTPUT_TOKENS = 65536
 SYSTEM_INSTRUCTION = (
     "You are a helpful, concise chatbot. Answer clearly and ask clarifying "
     "questions when the user's request is ambiguous."
@@ -34,30 +38,93 @@ def load_api_key() -> str:
     return api_key
 
 
-def get_float_env(name: str, default: float) -> float:
+def get_float_env(
+    name: str,
+    default: float,
+    min_value: float,
+    max_value: float,
+) -> float:
     value = os.getenv(name)
 
     if value is None:
         return default
 
     try:
-        return float(value)
+        parsed_value = float(value)
     except ValueError:
         logging.warning("Invalid %s value %r. Using default: %s", name, value, default)
         return default
 
+    if not min_value <= parsed_value <= max_value:
+        logging.warning(
+            "%s value %r is outside %s-%s. Using default: %s",
+            name,
+            value,
+            min_value,
+            max_value,
+            default,
+        )
+        return default
 
-def get_int_env(name: str, default: int) -> int:
+    return parsed_value
+
+
+def get_int_env(name: str, default: int, min_value: int, max_value: int) -> int:
     value = os.getenv(name)
 
     if value is None:
         return default
 
     try:
-        return int(value)
+        parsed_value = int(value)
     except ValueError:
         logging.warning("Invalid %s value %r. Using default: %s", name, value, default)
         return default
+
+    if not min_value <= parsed_value <= max_value:
+        logging.warning(
+            "%s value %r is outside %s-%s. Using default: %s",
+            name,
+            value,
+            min_value,
+            max_value,
+            default,
+        )
+        return default
+
+    return parsed_value
+
+
+def get_empty_response_message(response: Any) -> str:
+    prompt_feedback = getattr(response, "prompt_feedback", None)
+    block_reason = getattr(prompt_feedback, "block_reason", None)
+
+    if block_reason:
+        return f"Bot: The request was blocked: {block_reason}."
+
+    candidates = getattr(response, "candidates", None) or []
+    finish_reasons = [
+        str(finish_reason)
+        for candidate in candidates
+        if (finish_reason := getattr(candidate, "finish_reason", None)) is not None
+    ]
+
+    if finish_reasons:
+        return f"Bot: I could not produce text. Finish reason: {', '.join(finish_reasons)}."
+
+    return "Bot: I did not receive a valid response. Please try again."
+
+
+def get_response_text(response: Any) -> str:
+    try:
+        text = getattr(response, "text", "")
+    except ValueError:
+        return ""
+
+    if not isinstance(text, str):
+        return ""
+
+    return text.strip()
 
 
 def create_chat(api_key: str) -> tuple[Any, Any, str]:
@@ -65,10 +132,17 @@ def create_chat(api_key: str) -> tuple[Any, Any, str]:
 
     model_name = os.getenv("GEMINI_MODEL", DEFAULT_MODEL_NAME)
     generation_config = {
-        "temperature": get_float_env("GEMINI_TEMPERATURE", DEFAULT_TEMPERATURE),
+        "temperature": get_float_env(
+            "GEMINI_TEMPERATURE",
+            DEFAULT_TEMPERATURE,
+            MIN_TEMPERATURE,
+            MAX_TEMPERATURE,
+        ),
         "max_output_tokens": get_int_env(
             "GEMINI_MAX_OUTPUT_TOKENS",
             DEFAULT_MAX_OUTPUT_TOKENS,
+            MIN_MAX_OUTPUT_TOKENS,
+            MAX_MAX_OUTPUT_TOKENS,
         ),
     }
     model = genai.GenerativeModel(
@@ -143,10 +217,10 @@ def run_chat_loop(model: Any, chat: Any, model_name: str) -> None:
             try:
                 response = chat.send_message(user_input)
 
-                reply = getattr(response, "text", "").strip()
+                reply = get_response_text(response)
 
                 if not reply:
-                    print("Bot: I did not receive a valid response. Please try again.")
+                    print(get_empty_response_message(response))
                     continue
 
                 print_bot_reply(reply)
