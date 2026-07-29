@@ -18,9 +18,7 @@ SYSTEM_INSTRUCTION = (
     "questions when the user's request is ambiguous."
 )
 EXIT_COMMANDS = {"bye", "exit", "quit"}
-GEMINI_API_ERRORS = (
-    (google_exceptions.GoogleAPIError,) if google_exceptions is not None else ()
-)
+GEMINI_API_ERRORS = (google_exceptions.GoogleAPIError,) if google_exceptions else None
 
 
 def load_api_key() -> str:
@@ -153,12 +151,13 @@ def run_chat_loop(model: Any, chat: Any, model_name: str) -> None:
 
                 print_bot_reply(reply)
 
-            except GEMINI_API_ERRORS:
-                logging.exception("Gemini request failed")
-                print("Bot: Sorry, the Gemini API request failed. Please try again.")
-            except Exception:
-                logging.exception("Unexpected chatbot error")
-                print("Bot: Sorry, something unexpected went wrong. Please try again.")
+            except Exception as error:
+                if GEMINI_API_ERRORS is not None and isinstance(error, GEMINI_API_ERRORS):
+                    logging.exception("Gemini request failed")
+                    print("Bot: Sorry, the Gemini API request failed. Please try again.")
+                    continue
+
+                raise
     except KeyboardInterrupt:
         print("\nExiting chatbot.")
 
