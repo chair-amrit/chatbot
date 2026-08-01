@@ -29,6 +29,10 @@ EXIT_COMMANDS = {"bye", "exit", "quit"}
 MESSAGE_RETRY_ATTEMPTS = 3
 MESSAGE_RETRY_DELAY_SECONDS = 1.0
 MESSAGE_RETRY_JITTER_RATIO = 0.25
+MIN_MESSAGE_RETRY_ATTEMPTS = 1
+MAX_MESSAGE_RETRY_ATTEMPTS = 10
+MIN_MESSAGE_RETRY_DELAY_SECONDS = 0.0
+MAX_MESSAGE_RETRY_DELAY_SECONDS = 60.0
 MODEL_NAME_PATTERN = re.compile(r"^(?:models/)?[A-Za-z0-9][A-Za-z0-9._-]*$")
 GEMINI_API_ERRORS = (google_exceptions.GoogleAPIError,) if google_exceptions else None
 NETWORK_SEND_ERRORS = (TimeoutError, ConnectionError, OSError)
@@ -66,6 +70,8 @@ class ChatSession:
     model: Any
     chat: Any
     model_name: str
+    retry_attempts: int = MESSAGE_RETRY_ATTEMPTS
+    retry_delay_seconds: float = MESSAGE_RETRY_DELAY_SECONDS
 
 
 @dataclass(frozen=True)
@@ -73,12 +79,14 @@ class ChatConfig:
     model_name: str = DEFAULT_MODEL_NAME
     temperature: float = DEFAULT_TEMPERATURE
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
+    retry_attempts: int = MESSAGE_RETRY_ATTEMPTS
+    retry_delay_seconds: float = MESSAGE_RETRY_DELAY_SECONDS
     system_instruction: str = SYSTEM_INSTRUCTION
 
 
 InputFunc = Callable[[str], str]
 PrintFunc = Callable[..., None]
-SendMessageFunc = Callable[[Any, str], Any]
+SendMessageFunc = Callable[[ChatSession, str], Any]
 CommandHandler = Callable[[ChatSession, PrintFunc], ChatSession]
 
 
@@ -188,6 +196,18 @@ def load_chat_config() -> ChatConfig:
             MIN_MAX_OUTPUT_TOKENS,
             MAX_MAX_OUTPUT_TOKENS,
         ),
+        retry_attempts=get_int_env(
+            "GEMINI_RETRY_ATTEMPTS",
+            MESSAGE_RETRY_ATTEMPTS,
+            MIN_MESSAGE_RETRY_ATTEMPTS,
+            MAX_MESSAGE_RETRY_ATTEMPTS,
+        ),
+        retry_delay_seconds=get_float_env(
+            "GEMINI_RETRY_DELAY_SECONDS",
+            MESSAGE_RETRY_DELAY_SECONDS,
+            MIN_MESSAGE_RETRY_DELAY_SECONDS,
+            MAX_MESSAGE_RETRY_DELAY_SECONDS,
+        ),
     )
 
 
@@ -196,7 +216,7 @@ def get_empty_response_message(response: Any) -> str:
     block_reason = getattr(prompt_feedback, "block_reason", None)
 
     if block_reason:
-        return f"Bot: The request was blocked: {block_reason}."
+        return f"The request was blocked: {block_reason}."
 
     candidates = getattr(response, "candidates", None) or []
     finish_reasons = [
@@ -206,9 +226,9 @@ def get_empty_response_message(response: Any) -> str:
     ]
 
     if finish_reasons:
-        return f"Bot: I could not produce text. Finish reason: {', '.join(finish_reasons)}."
+        return f"I could not produce text. Finish reason: {', '.join(finish_reasons)}."
 
-    return "Bot: I did not receive a valid response. Please try again."
+    return "I did not receive a valid response. Please try again."
 
 
 def get_response_text(response: Any) -> str:
@@ -234,17 +254,22 @@ def get_retry_sleep_seconds(delay_seconds: float) -> float:
     return delay_seconds + jitter_seconds
 
 
-def send_message_with_retry(chat: Any, user_input: str) -> Any:
-    delay_seconds = MESSAGE_RETRY_DELAY_SECONDS
+def send_message_with_retry(
+    chat: Any,
+    user_input: str,
+    retry_attempts: int = MESSAGE_RETRY_ATTEMPTS,
+    retry_delay_seconds: float = MESSAGE_RETRY_DELAY_SECONDS,
+) -> Any:
+    delay_seconds = retry_delay_seconds
 
-    for attempt in range(1, MESSAGE_RETRY_ATTEMPTS + 1):
+    for attempt in range(1, retry_attempts + 1):
         try:
             return chat.send_message(user_input)
         except SEND_MESSAGE_ERRORS as error:
             if not is_transient_send_error(error):
                 raise
 
-            if attempt == MESSAGE_RETRY_ATTEMPTS:
+            if attempt == retry_attempts:
                 raise
 
             sleep_seconds = get_retry_sleep_seconds(delay_seconds)
@@ -256,6 +281,15 @@ def send_message_with_retry(chat: Any, user_input: str) -> Any:
             delay_seconds *= 2
 
     raise RuntimeError("Retry loop ended without a response.")
+
+
+def send_session_message(session: ChatSession, user_input: str) -> Any:
+    return send_message_with_retry(
+        session.chat,
+        user_input,
+        retry_attempts=session.retry_attempts,
+        retry_delay_seconds=session.retry_delay_seconds,
+    )
 
 
 def create_chat(api_key: str, config: ChatConfig | None = None) -> ChatSession:
@@ -279,6 +313,8 @@ def create_chat(api_key: str, config: ChatConfig | None = None) -> ChatSession:
         model=model,
         chat=model.start_chat(history=[]),
         model_name=model_name,
+        retry_attempts=config.retry_attempts,
+        retry_delay_seconds=config.retry_delay_seconds,
     )
 
 
@@ -296,6 +332,10 @@ def print_bot_reply(reply: str, print_func: PrintFunc = print) -> None:
     print_func("Bot:")
     print_func(reply)
     print_func()
+
+
+def print_bot_message(message: str, print_func: PrintFunc = print) -> None:
+    print_func(f"Bot: {message}")
 
 
 def handle_help(session: ChatSession, print_func: PrintFunc = print) -> ChatSession:
@@ -327,7 +367,7 @@ def run_chat_loop(
     session: ChatSession,
     input_func: InputFunc | None = None,
     print_func: PrintFunc = print,
-    send_message_func: SendMessageFunc = send_message_with_retry,
+    send_message_func: SendMessageFunc = send_session_message,
 ) -> None:
     if input_func is None:
         input_func = input
@@ -358,12 +398,12 @@ def run_chat_loop(
                 continue
 
             try:
-                response = send_message_func(session.chat, user_input)
+                response = send_message_func(session, user_input)
 
                 reply = get_response_text(response)
 
                 if not reply:
-                    print_func(get_empty_response_message(response))
+                    print_bot_message(get_empty_response_message(response), print_func)
                     continue
 
                 print_bot_reply(reply, print_func)
@@ -371,7 +411,10 @@ def run_chat_loop(
             except Exception as error:
                 if GEMINI_API_ERRORS is not None and isinstance(error, GEMINI_API_ERRORS):
                     logging.exception("Gemini request failed")
-                    print_func("Bot: Sorry, the Gemini API request failed. Please try again.")
+                    print_bot_message(
+                        "Sorry, the Gemini API request failed. Please try again.",
+                        print_func,
+                    )
                     continue
 
                 raise

@@ -13,6 +13,8 @@ class TestEnvParsing(unittest.TestCase):
         self.assertEqual(config.model_name, chatbot.DEFAULT_MODEL_NAME)
         self.assertEqual(config.temperature, chatbot.DEFAULT_TEMPERATURE)
         self.assertEqual(config.max_output_tokens, chatbot.DEFAULT_MAX_OUTPUT_TOKENS)
+        self.assertEqual(config.retry_attempts, chatbot.MESSAGE_RETRY_ATTEMPTS)
+        self.assertEqual(config.retry_delay_seconds, chatbot.MESSAGE_RETRY_DELAY_SECONDS)
         self.assertEqual(config.system_instruction, chatbot.SYSTEM_INSTRUCTION)
 
     def test_load_chat_config_reads_valid_env_values(self):
@@ -20,6 +22,8 @@ class TestEnvParsing(unittest.TestCase):
             "GEMINI_MODEL": "gemini-test",
             "GEMINI_TEMPERATURE": "1.25",
             "GEMINI_MAX_OUTPUT_TOKENS": "2048",
+            "GEMINI_RETRY_ATTEMPTS": "5",
+            "GEMINI_RETRY_DELAY_SECONDS": "1.5",
         }
 
         with patch.dict("os.environ", env, clear=True):
@@ -28,12 +32,16 @@ class TestEnvParsing(unittest.TestCase):
         self.assertEqual(config.model_name, "gemini-test")
         self.assertEqual(config.temperature, 1.25)
         self.assertEqual(config.max_output_tokens, 2048)
+        self.assertEqual(config.retry_attempts, 5)
+        self.assertEqual(config.retry_delay_seconds, 1.5)
 
     def test_load_chat_config_falls_back_for_invalid_env_values(self):
         env = {
             "GEMINI_MODEL": "   ",
             "GEMINI_TEMPERATURE": "hot",
             "GEMINI_MAX_OUTPUT_TOKENS": "0",
+            "GEMINI_RETRY_ATTEMPTS": "0",
+            "GEMINI_RETRY_DELAY_SECONDS": "-1",
         }
 
         with patch.dict("os.environ", env, clear=True):
@@ -42,6 +50,8 @@ class TestEnvParsing(unittest.TestCase):
         self.assertEqual(config.model_name, chatbot.DEFAULT_MODEL_NAME)
         self.assertEqual(config.temperature, chatbot.DEFAULT_TEMPERATURE)
         self.assertEqual(config.max_output_tokens, chatbot.DEFAULT_MAX_OUTPUT_TOKENS)
+        self.assertEqual(config.retry_attempts, chatbot.MESSAGE_RETRY_ATTEMPTS)
+        self.assertEqual(config.retry_delay_seconds, chatbot.MESSAGE_RETRY_DELAY_SECONDS)
 
     def test_load_chat_config_rejects_invalid_model_names(self):
         with patch.dict("os.environ", {"GEMINI_MODEL": "gemini flash"}, clear=True):
@@ -58,7 +68,7 @@ class TestEmptyResponses(unittest.TestCase):
 
         message = chatbot.get_empty_response_message(response)
 
-        self.assertEqual(message, "Bot: The request was blocked: SAFETY.")
+        self.assertEqual(message, "The request was blocked: SAFETY.")
 
     def test_empty_response_message_reports_finish_reasons(self):
         response = SimpleNamespace(
@@ -72,7 +82,7 @@ class TestEmptyResponses(unittest.TestCase):
 
         self.assertEqual(
             message,
-            "Bot: I could not produce text. Finish reason: MAX_TOKENS, STOP.",
+            "I could not produce text. Finish reason: MAX_TOKENS, STOP.",
         )
 
     def test_get_response_text_handles_missing_or_invalid_text(self):
@@ -126,6 +136,27 @@ class TestRetryBehavior(unittest.TestCase):
         self.assertEqual(response, "ok")
         self.assertEqual(chat.send_message.call_args_list, [call("hello"), call("hello")])
         sleep.assert_called_once_with(chatbot.MESSAGE_RETRY_DELAY_SECONDS)
+
+    def test_send_message_uses_configurable_attempts_and_delay(self):
+        chat = Mock()
+        chat.send_message.side_effect = [
+            TimeoutError("timeout"),
+            TimeoutError("timeout"),
+            "ok",
+        ]
+
+        with patch.object(chatbot.random, "uniform", return_value=0):
+            with patch.object(chatbot.time, "sleep") as sleep:
+                response = chatbot.send_message_with_retry(
+                    chat,
+                    "hello",
+                    retry_attempts=3,
+                    retry_delay_seconds=2.0,
+                )
+
+        self.assertEqual(response, "ok")
+        self.assertEqual(chat.send_message.call_args_list, [call("hello")] * 3)
+        self.assertEqual(sleep.call_args_list, [call(2.0), call(4.0)])
 
     def test_send_message_does_not_retry_non_transient_errors(self):
         chat = Mock()
@@ -195,9 +226,25 @@ class TestCommandHandling(unittest.TestCase):
             send_message_func=send_message,
         )
 
-        send_message.assert_called_once_with(session.chat, "hello")
+        send_message.assert_called_once_with(session, "hello")
         output.assert_any_call("Bot:")
         output.assert_any_call("Hi there")
+
+    def test_run_chat_loop_prints_empty_response_with_central_bot_prefix(self):
+        session = chatbot.ChatSession(model=Mock(), chat=Mock(), model_name="gemini-test")
+        inputs = Mock(side_effect=["hello", "exit"])
+        output = Mock()
+        send_message = Mock(return_value=SimpleNamespace(candidates=[]))
+
+        chatbot.run_chat_loop(
+            session,
+            input_func=inputs,
+            print_func=output,
+            send_message_func=send_message,
+        )
+
+        send_message.assert_called_once_with(session, "hello")
+        output.assert_any_call("Bot: I did not receive a valid response. Please try again.")
 
 
 class TestCreateChat(unittest.TestCase):
@@ -206,6 +253,8 @@ class TestCreateChat(unittest.TestCase):
             model_name="gemini-test",
             temperature=0.2,
             max_output_tokens=512,
+            retry_attempts=4,
+            retry_delay_seconds=3.5,
             system_instruction="Be brief.",
         )
         model = Mock()
@@ -225,6 +274,8 @@ class TestCreateChat(unittest.TestCase):
         model.start_chat.assert_called_once_with(history=[])
         self.assertEqual(session.chat, chat)
         self.assertEqual(session.model_name, "gemini-test")
+        self.assertEqual(session.retry_attempts, 4)
+        self.assertEqual(session.retry_delay_seconds, 3.5)
 
     def test_create_chat_rejects_invalid_supplied_config_model_name(self):
         config = chatbot.ChatConfig(model_name="bad/model/name")
