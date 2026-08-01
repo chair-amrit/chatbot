@@ -178,6 +178,7 @@ class TestCommandHandling(unittest.TestCase):
         self.assertIs(returned_session, session)
         output.assert_any_call("Commands:")
         output.assert_any_call("  /clear - Clear the current chat history")
+        output.assert_any_call("  /config - Show current model settings")
 
     def test_clear_command_resets_chat_history(self):
         model = Mock()
@@ -202,15 +203,38 @@ class TestCommandHandling(unittest.TestCase):
         self.assertIs(returned_session, session)
         output.assert_called_once_with("Current model: gemini-test")
 
+    def test_config_command_prints_current_model_settings(self):
+        session = chatbot.ChatSession(
+            model=Mock(),
+            chat=Mock(),
+            model_name="gemini-test",
+            temperature=0.2,
+            max_output_tokens=512,
+        )
+        output = Mock()
+
+        returned_session = chatbot.handle_config(session, output)
+
+        self.assertIs(returned_session, session)
+        self.assertEqual(
+            output.call_args_list,
+            [
+                call("Current configuration:"),
+                call("  Model: gemini-test"),
+                call("  Temperature: 0.2"),
+                call("  Max output tokens: 512"),
+            ],
+        )
+
     def test_run_chat_loop_dispatches_commands_and_exit_with_injected_io(self):
         session = Mock()
-        inputs = Mock(side_effect=["/help", "bye"])
+        inputs = Mock(side_effect=["/config", "bye"])
         output = Mock()
 
         chatbot.run_chat_loop(session, input_func=inputs, print_func=output)
 
         self.assertEqual(inputs.call_args_list, [call("You: "), call("You: ")])
-        output.assert_any_call("Commands:")
+        output.assert_any_call("Current configuration:")
         output.assert_any_call("Goodbye.")
 
     def test_run_chat_loop_uses_injected_sender(self):
@@ -274,6 +298,8 @@ class TestCreateChat(unittest.TestCase):
         model.start_chat.assert_called_once_with(history=[])
         self.assertEqual(session.chat, chat)
         self.assertEqual(session.model_name, "gemini-test")
+        self.assertEqual(session.temperature, 0.2)
+        self.assertEqual(session.max_output_tokens, 512)
         self.assertEqual(session.retry_attempts, 4)
         self.assertEqual(session.retry_delay_seconds, 3.5)
 

@@ -70,6 +70,8 @@ class ChatSession:
     model: Any
     chat: Any
     model_name: str
+    temperature: float = DEFAULT_TEMPERATURE
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
     retry_attempts: int = MESSAGE_RETRY_ATTEMPTS
     retry_delay_seconds: float = MESSAGE_RETRY_DELAY_SECONDS
 
@@ -313,6 +315,8 @@ def create_chat(api_key: str, config: ChatConfig | None = None) -> ChatSession:
         model=model,
         chat=model.start_chat(history=[]),
         model_name=model_name,
+        temperature=config.temperature,
+        max_output_tokens=config.max_output_tokens,
         retry_attempts=config.retry_attempts,
         retry_delay_seconds=config.retry_delay_seconds,
     )
@@ -324,6 +328,7 @@ def show_help(print_func: PrintFunc = print) -> None:
     print_func("  /clear - Clear the current chat history")
     print_func("  /reset - Clear the current chat history")
     print_func("  /model - Show the current model")
+    print_func("  /config - Show current model settings")
     print_func("  bye, exit, quit - Stop the chatbot")
 
 
@@ -354,12 +359,21 @@ def handle_model(session: ChatSession, print_func: PrintFunc = print) -> ChatSes
     return session
 
 
+def handle_config(session: ChatSession, print_func: PrintFunc = print) -> ChatSession:
+    print_func("Current configuration:")
+    print_func(f"  Model: {session.model_name}")
+    print_func(f"  Temperature: {session.temperature}")
+    print_func(f"  Max output tokens: {session.max_output_tokens}")
+    return session
+
+
 def get_command_handlers() -> dict[str, CommandHandler]:
     return {
         "/help": handle_help,
         "/clear": handle_clear,
         "/reset": handle_clear,
         "/model": handle_model,
+        "/config": handle_config,
     }
 
 
