@@ -56,6 +56,14 @@ class ChatSession:
     model_name: str
 
 
+@dataclass(frozen=True)
+class ChatConfig:
+    model_name: str = DEFAULT_MODEL_NAME
+    temperature: float = DEFAULT_TEMPERATURE
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
+    system_instruction: str = SYSTEM_INSTRUCTION
+
+
 CommandHandler = Callable[[ChatSession], ChatSession]
 
 
@@ -140,6 +148,24 @@ def get_str_env(name: str, default: str) -> str:
     return stripped_value
 
 
+def load_chat_config() -> ChatConfig:
+    return ChatConfig(
+        model_name=get_str_env("GEMINI_MODEL", DEFAULT_MODEL_NAME),
+        temperature=get_float_env(
+            "GEMINI_TEMPERATURE",
+            DEFAULT_TEMPERATURE,
+            MIN_TEMPERATURE,
+            MAX_TEMPERATURE,
+        ),
+        max_output_tokens=get_int_env(
+            "GEMINI_MAX_OUTPUT_TOKENS",
+            DEFAULT_MAX_OUTPUT_TOKENS,
+            MIN_MAX_OUTPUT_TOKENS,
+            MAX_MAX_OUTPUT_TOKENS,
+        ),
+    )
+
+
 def get_empty_response_message(response: Any) -> str:
     prompt_feedback = getattr(response, "prompt_feedback", None)
     block_reason = getattr(prompt_feedback, "block_reason", None)
@@ -195,34 +221,26 @@ def send_message_with_retry(chat: Any, user_input: str) -> Any:
     raise RuntimeError("Retry loop ended without a response.")
 
 
-def create_chat(api_key: str) -> ChatSession:
+def create_chat(api_key: str, config: ChatConfig | None = None) -> ChatSession:
     genai.configure(api_key=api_key)
 
-    model_name = get_str_env("GEMINI_MODEL", DEFAULT_MODEL_NAME)
+    if config is None:
+        config = load_chat_config()
+
     generation_config = {
-        "temperature": get_float_env(
-            "GEMINI_TEMPERATURE",
-            DEFAULT_TEMPERATURE,
-            MIN_TEMPERATURE,
-            MAX_TEMPERATURE,
-        ),
-        "max_output_tokens": get_int_env(
-            "GEMINI_MAX_OUTPUT_TOKENS",
-            DEFAULT_MAX_OUTPUT_TOKENS,
-            MIN_MAX_OUTPUT_TOKENS,
-            MAX_MAX_OUTPUT_TOKENS,
-        ),
+        "temperature": config.temperature,
+        "max_output_tokens": config.max_output_tokens,
     }
     model = genai.GenerativeModel(
-        model_name,
-        system_instruction=SYSTEM_INSTRUCTION,
+        config.model_name,
+        system_instruction=config.system_instruction,
         generation_config=generation_config,
     )
 
     return ChatSession(
         model=model,
         chat=model.start_chat(history=[]),
-        model_name=model_name,
+        model_name=config.model_name,
     )
 
 
