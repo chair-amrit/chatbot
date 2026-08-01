@@ -102,6 +102,24 @@ class TestRetryBehavior(unittest.TestCase):
         chat.send_message.side_effect = [transient_error("try again"), "ok"]
 
         with patch.object(chatbot, "TRANSIENT_GEMINI_ERRORS", (transient_error,)):
+            with patch.object(chatbot, "SEND_MESSAGE_ERRORS", (transient_error,)):
+                with patch.object(chatbot.random, "uniform", return_value=0.25) as jitter:
+                    with patch.object(chatbot.time, "sleep") as sleep:
+                        response = chatbot.send_message_with_retry(chat, "hello")
+
+        self.assertEqual(response, "ok")
+        self.assertEqual(chat.send_message.call_args_list, [call("hello"), call("hello")])
+        jitter.assert_called_once_with(
+            0,
+            chatbot.MESSAGE_RETRY_DELAY_SECONDS * chatbot.MESSAGE_RETRY_JITTER_RATIO,
+        )
+        sleep.assert_called_once_with(chatbot.MESSAGE_RETRY_DELAY_SECONDS + 0.25)
+
+    def test_send_message_retries_network_errors(self):
+        chat = Mock()
+        chat.send_message.side_effect = [TimeoutError("timeout"), "ok"]
+
+        with patch.object(chatbot.random, "uniform", return_value=0):
             with patch.object(chatbot.time, "sleep") as sleep:
                 response = chatbot.send_message_with_retry(chat, "hello")
 

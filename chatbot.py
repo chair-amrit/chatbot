@@ -1,5 +1,6 @@
 import os
 import logging
+import random
 import re
 import time
 from dataclasses import dataclass
@@ -27,8 +28,13 @@ SYSTEM_INSTRUCTION = (
 EXIT_COMMANDS = {"bye", "exit", "quit"}
 MESSAGE_RETRY_ATTEMPTS = 3
 MESSAGE_RETRY_DELAY_SECONDS = 1.0
+MESSAGE_RETRY_JITTER_RATIO = 0.25
 MODEL_NAME_PATTERN = re.compile(r"^(?:models/)?[A-Za-z0-9][A-Za-z0-9._-]*$")
 GEMINI_API_ERRORS = (google_exceptions.GoogleAPIError,) if google_exceptions else None
+NETWORK_SEND_ERRORS = (TimeoutError, ConnectionError, OSError)
+SEND_MESSAGE_ERRORS = (
+    (google_exceptions.GoogleAPIError,) if google_exceptions else ()
+) + NETWORK_SEND_ERRORS
 
 if google_exceptions:
     TRANSIENT_GEMINI_ERRORS = tuple(
@@ -217,24 +223,36 @@ def get_response_text(response: Any) -> str:
     return text.strip()
 
 
+def is_transient_send_error(error: BaseException) -> bool:
+    return isinstance(error, NETWORK_SEND_ERRORS) or (
+        bool(TRANSIENT_GEMINI_ERRORS) and isinstance(error, TRANSIENT_GEMINI_ERRORS)
+    )
+
+
+def get_retry_sleep_seconds(delay_seconds: float) -> float:
+    jitter_seconds = random.uniform(0, delay_seconds * MESSAGE_RETRY_JITTER_RATIO)
+    return delay_seconds + jitter_seconds
+
+
 def send_message_with_retry(chat: Any, user_input: str) -> Any:
     delay_seconds = MESSAGE_RETRY_DELAY_SECONDS
 
     for attempt in range(1, MESSAGE_RETRY_ATTEMPTS + 1):
         try:
             return chat.send_message(user_input)
-        except Exception as error:
-            if not TRANSIENT_GEMINI_ERRORS or not isinstance(error, TRANSIENT_GEMINI_ERRORS):
+        except SEND_MESSAGE_ERRORS as error:
+            if not is_transient_send_error(error):
                 raise
 
             if attempt == MESSAGE_RETRY_ATTEMPTS:
                 raise
 
+            sleep_seconds = get_retry_sleep_seconds(delay_seconds)
             logging.warning(
                 "Gemini request failed transiently. Retrying in %.1f seconds.",
-                delay_seconds,
+                sleep_seconds,
             )
-            time.sleep(delay_seconds)
+            time.sleep(sleep_seconds)
             delay_seconds *= 2
 
     raise RuntimeError("Retry loop ended without a response.")
