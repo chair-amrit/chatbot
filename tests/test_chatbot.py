@@ -43,6 +43,11 @@ class TestEnvParsing(unittest.TestCase):
         self.assertEqual(config.temperature, chatbot.DEFAULT_TEMPERATURE)
         self.assertEqual(config.max_output_tokens, chatbot.DEFAULT_MAX_OUTPUT_TOKENS)
 
+    def test_load_chat_config_rejects_invalid_model_names(self):
+        with patch.dict("os.environ", {"GEMINI_MODEL": "gemini flash"}, clear=True):
+            with self.assertRaises(chatbot.InvalidModelNameError):
+                chatbot.load_chat_config()
+
 
 class TestEmptyResponses(unittest.TestCase):
     def test_empty_response_message_reports_block_reason(self):
@@ -117,46 +122,64 @@ class TestRetryBehavior(unittest.TestCase):
 class TestCommandHandling(unittest.TestCase):
     def test_help_command_prints_available_commands(self):
         session = Mock()
+        output = Mock()
 
-        with patch("builtins.print") as mocked_print:
-            returned_session = chatbot.handle_help(session)
+        returned_session = chatbot.handle_help(session, output)
 
         self.assertIs(returned_session, session)
-        mocked_print.assert_any_call("Commands:")
-        mocked_print.assert_any_call("  /clear - Clear the current chat history")
+        output.assert_any_call("Commands:")
+        output.assert_any_call("  /clear - Clear the current chat history")
 
     def test_clear_command_resets_chat_history(self):
         model = Mock()
         new_chat = Mock()
         model.start_chat.return_value = new_chat
         session = chatbot.ChatSession(model=model, chat=Mock(), model_name="gemini-test")
+        output = Mock()
 
-        with patch("builtins.print") as mocked_print:
-            returned_session = chatbot.handle_clear(session)
+        returned_session = chatbot.handle_clear(session, output)
 
         self.assertIs(returned_session, session)
         self.assertIs(session.chat, new_chat)
         model.start_chat.assert_called_once_with(history=[])
-        mocked_print.assert_called_once_with("Chat history cleared.")
+        output.assert_called_once_with("Chat history cleared.")
 
     def test_model_command_prints_current_model(self):
         session = chatbot.ChatSession(model=Mock(), chat=Mock(), model_name="gemini-test")
+        output = Mock()
 
-        with patch("builtins.print") as mocked_print:
-            returned_session = chatbot.handle_model(session)
+        returned_session = chatbot.handle_model(session, output)
 
         self.assertIs(returned_session, session)
-        mocked_print.assert_called_once_with("Current model: gemini-test")
+        output.assert_called_once_with("Current model: gemini-test")
 
-    def test_run_chat_loop_dispatches_commands_and_exit(self):
+    def test_run_chat_loop_dispatches_commands_and_exit_with_injected_io(self):
         session = Mock()
+        inputs = Mock(side_effect=["/help", "bye"])
+        output = Mock()
 
-        with patch("builtins.input", side_effect=["/help", "bye"]):
-            with patch("builtins.print") as mocked_print:
-                chatbot.run_chat_loop(session)
+        chatbot.run_chat_loop(session, input_func=inputs, print_func=output)
 
-        mocked_print.assert_any_call("Commands:")
-        mocked_print.assert_any_call("Goodbye.")
+        self.assertEqual(inputs.call_args_list, [call("You: "), call("You: ")])
+        output.assert_any_call("Commands:")
+        output.assert_any_call("Goodbye.")
+
+    def test_run_chat_loop_uses_injected_sender(self):
+        session = chatbot.ChatSession(model=Mock(), chat=Mock(), model_name="gemini-test")
+        inputs = Mock(side_effect=["hello", "exit"])
+        output = Mock()
+        send_message = Mock(return_value=SimpleNamespace(text="Hi there"))
+
+        chatbot.run_chat_loop(
+            session,
+            input_func=inputs,
+            print_func=output,
+            send_message_func=send_message,
+        )
+
+        send_message.assert_called_once_with(session.chat, "hello")
+        output.assert_any_call("Bot:")
+        output.assert_any_call("Hi there")
 
 
 class TestCreateChat(unittest.TestCase):
@@ -184,6 +207,16 @@ class TestCreateChat(unittest.TestCase):
         model.start_chat.assert_called_once_with(history=[])
         self.assertEqual(session.chat, chat)
         self.assertEqual(session.model_name, "gemini-test")
+
+    def test_create_chat_rejects_invalid_supplied_config_model_name(self):
+        config = chatbot.ChatConfig(model_name="bad/model/name")
+
+        with patch.object(chatbot.genai, "configure"):
+            with patch.object(chatbot.genai, "GenerativeModel") as model_cls:
+                with self.assertRaises(chatbot.InvalidModelNameError):
+                    chatbot.create_chat("api-key", config)
+
+        model_cls.assert_not_called()
 
 
 if __name__ == "__main__":

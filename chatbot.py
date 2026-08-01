@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -26,6 +27,7 @@ SYSTEM_INSTRUCTION = (
 EXIT_COMMANDS = {"bye", "exit", "quit"}
 MESSAGE_RETRY_ATTEMPTS = 3
 MESSAGE_RETRY_DELAY_SECONDS = 1.0
+MODEL_NAME_PATTERN = re.compile(r"^(?:models/)?[A-Za-z0-9][A-Za-z0-9._-]*$")
 GEMINI_API_ERRORS = (google_exceptions.GoogleAPIError,) if google_exceptions else None
 
 if google_exceptions:
@@ -49,6 +51,10 @@ class MissingApiKeyError(Exception):
     """Raised when GEMINI_API_KEY is unavailable."""
 
 
+class InvalidModelNameError(ValueError):
+    """Raised when GEMINI_MODEL contains an unsupported model name format."""
+
+
 @dataclass
 class ChatSession:
     model: Any
@@ -64,7 +70,10 @@ class ChatConfig:
     system_instruction: str = SYSTEM_INSTRUCTION
 
 
-CommandHandler = Callable[[ChatSession], ChatSession]
+InputFunc = Callable[[str], str]
+PrintFunc = Callable[..., None]
+SendMessageFunc = Callable[[Any, str], Any]
+CommandHandler = Callable[[ChatSession, PrintFunc], ChatSession]
 
 
 def load_api_key() -> str:
@@ -148,9 +157,19 @@ def get_str_env(name: str, default: str) -> str:
     return stripped_value
 
 
+def validate_model_name(model_name: str) -> str:
+    if not MODEL_NAME_PATTERN.fullmatch(model_name):
+        raise InvalidModelNameError(
+            "GEMINI_MODEL must contain only letters, numbers, dots, underscores, "
+            "or hyphens, with an optional 'models/' prefix."
+        )
+
+    return model_name
+
+
 def load_chat_config() -> ChatConfig:
     return ChatConfig(
-        model_name=get_str_env("GEMINI_MODEL", DEFAULT_MODEL_NAME),
+        model_name=validate_model_name(get_str_env("GEMINI_MODEL", DEFAULT_MODEL_NAME)),
         temperature=get_float_env(
             "GEMINI_TEMPERATURE",
             DEFAULT_TEMPERATURE,
@@ -227,12 +246,13 @@ def create_chat(api_key: str, config: ChatConfig | None = None) -> ChatSession:
     if config is None:
         config = load_chat_config()
 
+    model_name = validate_model_name(config.model_name)
     generation_config = {
         "temperature": config.temperature,
         "max_output_tokens": config.max_output_tokens,
     }
     model = genai.GenerativeModel(
-        config.model_name,
+        model_name,
         system_instruction=config.system_instruction,
         generation_config=generation_config,
     )
@@ -240,39 +260,39 @@ def create_chat(api_key: str, config: ChatConfig | None = None) -> ChatSession:
     return ChatSession(
         model=model,
         chat=model.start_chat(history=[]),
-        model_name=config.model_name,
+        model_name=model_name,
     )
 
 
-def show_help() -> None:
-    print("Commands:")
-    print("  /help  - Show available commands")
-    print("  /clear - Clear the current chat history")
-    print("  /reset - Clear the current chat history")
-    print("  /model - Show the current model")
-    print("  bye, exit, quit - Stop the chatbot")
+def show_help(print_func: PrintFunc = print) -> None:
+    print_func("Commands:")
+    print_func("  /help  - Show available commands")
+    print_func("  /clear - Clear the current chat history")
+    print_func("  /reset - Clear the current chat history")
+    print_func("  /model - Show the current model")
+    print_func("  bye, exit, quit - Stop the chatbot")
 
 
-def print_bot_reply(reply: str) -> None:
-    print()
-    print("Bot:")
-    print(reply)
-    print()
+def print_bot_reply(reply: str, print_func: PrintFunc = print) -> None:
+    print_func()
+    print_func("Bot:")
+    print_func(reply)
+    print_func()
 
 
-def handle_help(session: ChatSession) -> ChatSession:
-    show_help()
+def handle_help(session: ChatSession, print_func: PrintFunc = print) -> ChatSession:
+    show_help(print_func)
     return session
 
 
-def handle_clear(session: ChatSession) -> ChatSession:
-    print("Chat history cleared.")
+def handle_clear(session: ChatSession, print_func: PrintFunc = print) -> ChatSession:
+    print_func("Chat history cleared.")
     session.chat = session.model.start_chat(history=[])
     return session
 
 
-def handle_model(session: ChatSession) -> ChatSession:
-    print(f"Current model: {session.model_name}")
+def handle_model(session: ChatSession, print_func: PrintFunc = print) -> ChatSession:
+    print_func(f"Current model: {session.model_name}")
     return session
 
 
@@ -285,18 +305,26 @@ def get_command_handlers() -> dict[str, CommandHandler]:
     }
 
 
-def run_chat_loop(session: ChatSession) -> None:
-    print("Chatbot ready. Type '/help' for commands or 'bye', 'exit', or 'quit' to stop.")
+def run_chat_loop(
+    session: ChatSession,
+    input_func: InputFunc | None = None,
+    print_func: PrintFunc = print,
+    send_message_func: SendMessageFunc = send_message_with_retry,
+) -> None:
+    if input_func is None:
+        input_func = input
+
+    print_func("Chatbot ready. Type '/help' for commands or 'bye', 'exit', or 'quit' to stop.")
     command_handlers = get_command_handlers()
 
     try:
         while True:
-            user_input = input("You: ")
+            user_input = input_func("You: ")
             user_input = user_input.strip()
             normalized_input = user_input.lower()
 
             if normalized_input in EXIT_COMMANDS:
-                print("Goodbye.")
+                print_func("Goodbye.")
                 break
 
             if not user_input:
@@ -304,33 +332,33 @@ def run_chat_loop(session: ChatSession) -> None:
 
             command_handler = command_handlers.get(normalized_input)
             if command_handler is not None:
-                session = command_handler(session)
+                session = command_handler(session, print_func)
                 continue
 
             if normalized_input.startswith("/"):
-                print("Unknown command. Type /help for available commands.")
+                print_func("Unknown command. Type /help for available commands.")
                 continue
 
             try:
-                response = send_message_with_retry(session.chat, user_input)
+                response = send_message_func(session.chat, user_input)
 
                 reply = get_response_text(response)
 
                 if not reply:
-                    print(get_empty_response_message(response))
+                    print_func(get_empty_response_message(response))
                     continue
 
-                print_bot_reply(reply)
+                print_bot_reply(reply, print_func)
 
             except Exception as error:
                 if GEMINI_API_ERRORS is not None and isinstance(error, GEMINI_API_ERRORS):
                     logging.exception("Gemini request failed")
-                    print("Bot: Sorry, the Gemini API request failed. Please try again.")
+                    print_func("Bot: Sorry, the Gemini API request failed. Please try again.")
                     continue
 
                 raise
     except KeyboardInterrupt:
-        print("\nExiting chatbot.")
+        print_func("\nExiting chatbot.")
 
 
 def main() -> None:
@@ -338,13 +366,16 @@ def main() -> None:
 
     try:
         api_key = load_api_key()
+        session = create_chat(api_key)
     except MissingApiKeyError as error:
         print(f"Error: {error}")
         print("Add it to .env in this project folder, for example:")
         print("GEMINI_API_KEY=your_api_key_here")
         raise SystemExit(1)
+    except InvalidModelNameError as error:
+        print(f"Error: {error}")
+        raise SystemExit(1)
 
-    session = create_chat(api_key)
     run_chat_loop(session)
 
 
